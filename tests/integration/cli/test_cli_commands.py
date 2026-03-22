@@ -734,3 +734,36 @@ def test_load_credentials_normalizes_tilde_paths_from_mcp_json(monkeypatch, tmp_
         assert os.environ["FALKORDB_SOCKET_PATH"] == str((tmp_path / ".codegraphcontext" / "global" / "db" / "falkordb.sock").resolve())
         assert os.environ["DEBUG_LOG_PATH"] == str((tmp_path / "mcp_debug.log").resolve())
         assert os.environ["LOG_FILE_PATH"] == str((tmp_path / ".codegraphcontext" / "logs" / "cgc.log").resolve())
+
+class TestLoadCredentialsPrecedence:
+    @patch('codegraphcontext.cli.main.find_dotenv', return_value=None)
+    @patch('codegraphcontext.cli.main.config_manager')
+    def test_load_credentials_preserves_existing_shell_env(self, mock_config_mgr, mock_find_dotenv, tmp_path, monkeypatch):
+        mock_config_mgr.ensure_config_dir.return_value = None
+
+        home_dir = tmp_path / "home"
+        config_dir = home_dir / ".codegraphcontext"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / ".env").write_text(
+            "IGNORE_TEST_FILES=false\n"
+            "MAX_DEPTH=unlimited\n"
+            "DEFAULT_DATABASE=neo4j\n"
+        )
+
+        monkeypatch.setenv("IGNORE_TEST_FILES", "true")
+        monkeypatch.setenv("MAX_DEPTH", "1")
+        monkeypatch.setenv("DEFAULT_DATABASE", "kuzudb")
+
+        from codegraphcontext.cli.main import _load_credentials
+        from io import StringIO
+        from rich.console import Console
+
+        output = StringIO()
+        with patch('codegraphcontext.cli.main.console', Console(file=output, force_terminal=False)), \
+             patch('codegraphcontext.cli.main.Path.home', return_value=home_dir), \
+             patch('codegraphcontext.cli.main.Path.cwd', return_value=tmp_path):
+            _load_credentials()
+
+        assert os.environ["IGNORE_TEST_FILES"] == "true"
+        assert os.environ["MAX_DEPTH"] == "1"
+        assert os.environ["DEFAULT_DATABASE"] == "kuzudb"

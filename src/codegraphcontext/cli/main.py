@@ -292,13 +292,12 @@ def _load_credentials():
     Priority order (highest to lowest):
     1. Runtime environment variables (shell/CI)
     2. Local `.env` in project directory (project-specific overrides)
-    3. Global `~/.codegraphcontext/.env` (user defaults, including `cgc config set`)
-    4. Local `mcp.json` env vars (project defaults)
-    1. Local `mcp.json` env vars (highest - explicit MCP server config)
-    2. ``<cwd>/.codegraphcontext/.env`` only (no parent-directory walk)
-    3. Global `~/.codegraphcontext/.env` (lowest - user defaults)
+    3. ``<cwd>/.codegraphcontext/.env`` (project-specific CGC overrides)
+    4. Global `~/.codegraphcontext/.env` (user defaults, including `cgc config set`)
+    5. Local `mcp.json` env vars (project defaults)
 
-    Step 2 skips duplicate loading when that file is the same path as the global file.
+    The local CGC env step skips duplicate loading when that file is the same
+    path as the global file.
     Arbitrary repo-root `.env` files are not loaded—only CodeGraphContext config paths.
     """
     from dotenv import dotenv_values, find_dotenv
@@ -384,11 +383,8 @@ def _load_credentials():
         merged_config.update(config)
     
     # Apply merged config to environment, but never override runtime env.
-    # Apply merged config to environment.
-    # IMPORTANT: DB-selection keys set in the shell must win over .env defaults.
-    # E.g. `DEFAULT_DATABASE=falkordb cgc index …` must not be overridden by
-    # DEFAULT_DATABASE=neo4j sitting in ~/.codegraphcontext/.env
-    DB_OVERRIDE_KEYS = {"CGC_RUNTIME_DB_TYPE", "DEFAULT_DATABASE"}
+    # Shell-level overrides such as `IGNORE_TEST_FILES=true cgc index ...`
+    # or `DEFAULT_DATABASE=kuzudb cgc ...` cannot be clobbered by config files.
     for key, value in merged_config.items():
         if value is not None:  # Only set non-None values
             if key in runtime_env:
