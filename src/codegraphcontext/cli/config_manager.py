@@ -48,6 +48,9 @@ DEFAULT_CONFIG = {
     "CACHE_ENABLED": "true",
     "IGNORE_DIRS": "node_modules,venv,.venv,env,.env,dist,build,target,out,.git,.idea,.vscode,__pycache__",
     "INDEX_SOURCE": "true",
+    "INDEX_CALLS": "true",
+    "INDEX_INHERITANCE": "true",
+    "WRITE_BATCH_SIZE": "400",
     # SCIP indexer feature flag (default off — existing Tree-sitter behaviour unchanged)
     "SCIP_INDEXER": "false",
     "SCIP_LANGUAGES": "python,typescript,javascript,go,rust,java,dart,cpp,c,csharp",
@@ -89,6 +92,9 @@ CONFIG_DESCRIPTIONS = {
     "CACHE_ENABLED": "Enable caching for faster re-indexing",
     "IGNORE_DIRS": "Comma-separated list of directory names to ignore during indexing",
     "INDEX_SOURCE": "Store full source code in graph database (for faster indexing use false, for better performance use true)",
+    "INDEX_CALLS": "Create CALLS relationships during indexing (disable for faster local indexing)",
+    "INDEX_INHERITANCE": "Create INHERITS relationships during indexing (disable for faster local indexing)",
+    "WRITE_BATCH_SIZE": "Number of files to accumulate before each batched graph write flush",
     "SCIP_INDEXER": "Use SCIP-based indexing for higher accuracy call/inheritance resolution (requires scip-<lang> tools installed)",
     "SCIP_LANGUAGES": "Comma-separated languages to index via SCIP when SCIP_INDEXER=true (python,typescript,javascript,go,rust,java,dart,cpp,c,csharp)",
     "SKIP_EXTERNAL_RESOLUTION": "Skip resolution attempts for external library method calls (recommended for enterprise large Java/Spring codebases)",
@@ -416,6 +422,14 @@ def validate_config_value(key: str, value: str) -> tuple[bool, Optional[str]]:
                 return False, "PARALLEL_WORKERS must be between 1 and 32"
         except ValueError:
             return False, "PARALLEL_WORKERS must be a number"
+
+    if key == "WRITE_BATCH_SIZE":
+        try:
+            batch_size = int(value)
+            if batch_size <= 0:
+                return False, "WRITE_BATCH_SIZE must be a positive number"
+        except ValueError:
+            return False, "WRITE_BATCH_SIZE must be a number"
 
     if key == "MAX_TOOL_RESPONSE_TOKENS":
         try:
