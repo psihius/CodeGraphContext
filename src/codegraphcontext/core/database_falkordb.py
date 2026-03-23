@@ -264,11 +264,23 @@ class FalkorDBManager:
         """Closes the connection."""
         if self._driver is not None:
             info_logger("Closing FalkorDB Lite connection")
+            try:
+                self._driver.close()
+            except Exception as e:
+                warning_logger(f"Failed to gracefully close FalkorDB Lite client: {e}")
             self._driver = None
             self._graph = None
 
     def shutdown(self):
         """Kills the subprocess on exit."""
+        if self._driver is not None:
+            try:
+                self._driver.close()
+            except Exception as e:
+                warning_logger(f"Failed to gracefully close FalkorDB Lite client during shutdown: {e}")
+            finally:
+                self._driver = None
+                self._graph = None
         if self._process:
             if self._process.poll() is None:
                 info_logger("Stopping FalkorDB subprocess...")
