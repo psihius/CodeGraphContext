@@ -94,3 +94,4 @@ target/
 venv_indexing/
 scratch/
 scripts/
+.cgcignore.local

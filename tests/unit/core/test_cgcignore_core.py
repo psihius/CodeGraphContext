@@ -37,6 +37,35 @@ def test_build_ignore_spec_merges_default_and_user_patterns(tmp_path: Path):
     assert not spec.match_file("config.json")
 
 
+def test_build_ignore_spec_merges_cgcignore_local_overlay(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".cgcignore").write_text("vendor/\n", encoding="utf-8")
+    (repo / ".cgcignore.local").write_text("generated/\n", encoding="utf-8")
+
+    spec, resolved = build_ignore_spec(ignore_root=repo, default_patterns=["*.png"])
+
+    assert resolved == repo / ".cgcignore"
+    assert spec.match_file("vendor/package.py")
+    assert spec.match_file("generated/client.py")
+    assert spec.match_file("assets/icon.png")
+    assert not spec.match_file("src/main.py")
+
+
+def test_build_ignore_spec_uses_cgcignore_local_next_to_created_repo_file(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".cgcignore.local").write_text("fixtures/\n", encoding="utf-8")
+
+    spec, resolved = build_ignore_spec(ignore_root=repo, default_patterns=["*.png"])
+
+    assert resolved == repo / ".cgcignore"
+    assert resolved.exists()
+    assert spec.match_file("fixtures/sample.py")
+    assert spec.match_file("assets/icon.png")
+    assert not spec.match_file("src/main.py")
+
+
 def test_build_ignore_spec_auto_creates_cgcignore_with_defaults(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -175,4 +204,3 @@ def test_safe_walk_directory_pruning_and_error_handling(tmp_path: Path, monkeypa
     files_with_error = safe_walk(repo, ignore_root=repo)
     recovered_names = {f.name for f in files_with_error}
     assert "main.py" in recovered_names
-

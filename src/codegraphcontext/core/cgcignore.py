@@ -90,7 +90,7 @@ def build_ignore_spec(
     default_patterns: list[str],
     explicit_path: Optional[str] = None,
 ) -> Tuple[PathSpec, Optional[Path]]:
-    """Build PathSpec using merged default + user .cgcignore patterns.
+    """Build PathSpec using default, user, and local-only ignore patterns.
 
     Returns the compiled spec and the discovered/created .cgcignore path.
     """
@@ -105,6 +105,12 @@ def build_ignore_spec(
     merged_user_patterns.extend(
         parse_cgcignore_lines(local_cgcignore_path.read_text(encoding="utf-8").splitlines())
     )
+
+    local_overlay_path = local_cgcignore_path.parent / ".cgcignore.local"
+    if local_overlay_path.exists():
+        merged_user_patterns.extend(
+            parse_cgcignore_lines(local_overlay_path.read_text(encoding="utf-8").splitlines())
+        )
 
     if (
         explicit_cgcignore_path
