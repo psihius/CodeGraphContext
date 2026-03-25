@@ -54,6 +54,32 @@ pytest tests/integration/test_kuzudb.py
 CGC_SKIP_REINDEX=true pytest
 ```
 
+## Golden Samples
+
+For indexing, discovery, and graph-parity work, keep local golden samples
+outside the repo and build them from a detached `main` worktree with an
+isolated `HOME`.
+
+Recommended local layout:
+
+```bash
+CGC_GOLDEN_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/cgc-compare/golden-samples"
+```
+
+Recommended rules:
+*   Build the baseline from a clean detached `CodeGraphContext` `main` worktree.
+*   Index a disposable target worktree, not your live repo checkout.
+*   Preserve backend-native snapshots under `$CGC_GOLDEN_ROOT/<repo>-main-<backend>/`.
+*   If the repo relies on local ignore overlays such as `.cgcignore.local`,
+    mirror those rules into the disposable target worktree before indexing.
+*   For FalkorDB Lite, keep the socket path short, for example under `/tmp/`,
+    because Unix-domain socket paths fail once they get too long.
+
+The fuller local workflow and command examples are documented in the repository
+root `TESTING.md` under `Golden Samples For Parity`.
+
+## Submitting Changes
+
 *Note: Integration tests for remote databases like Neo4j require a running local database instance (refer to docker-compose.yml).*
 
 ### Formatting & Linting
