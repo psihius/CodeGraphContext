@@ -301,8 +301,14 @@ class MCPServer:
     def delete_repository_tool(self, **args) -> Dict[str, Any]:
         return management_handlers.delete_repository(self.graph_builder, **args)
 
+    def check_index_freshness_tool(self, **args) -> Dict[str, Any]:
+        return management_handlers.check_index_freshness(self.graph_builder, **args)
+
     def check_job_status_tool(self, **args) -> Dict[str, Any]:
         return management_handlers.check_job_status(self.job_manager, **args)
+
+    def wait_for_job_tool(self, **args) -> Dict[str, Any]:
+        return management_handlers.wait_for_job(self.job_manager, **args)
     
     def list_jobs_tool(self) -> Dict[str, Any]:
         return management_handlers.list_jobs(self.job_manager)
@@ -319,6 +325,15 @@ class MCPServer:
             self.job_manager, 
             self.loop, 
             self.list_indexed_repositories_tool, # Pass the wrapper or bound method so it executes correctly
+            **args
+        )
+
+    def reindex_repository_tool(self, **args) -> Dict[str, Any]:
+        return indexing_handlers.reindex_repository(
+            self.graph_builder,
+            self.job_manager,
+            self.loop,
+            self.list_indexed_repositories_tool,
             **args
         )
     
@@ -523,12 +538,15 @@ class MCPServer:
             "watch_directory": self.watch_directory_tool,
             "execute_cypher_query": self.execute_cypher_query_tool,
             "add_code_to_graph": self.add_code_to_graph_tool,
+            "reindex_repository": self.reindex_repository_tool,
             "check_job_status": self.check_job_status_tool,
+            "wait_for_job": self.wait_for_job_tool,
             "list_jobs": self.list_jobs_tool,
             "calculate_cyclomatic_complexity": self.calculate_cyclomatic_complexity_tool,
             "find_most_complex_functions": self.find_most_complex_functions_tool,
             "list_indexed_repositories": self.list_indexed_repositories_tool,
             "delete_repository": self.delete_repository_tool,
+            "check_index_freshness": self.check_index_freshness_tool,
             "visualize_graph_query": self.visualize_graph_query_tool,
             "list_watched_paths": self.list_watched_paths_tool,
             "unwatch_directory": self.unwatch_directory_tool,

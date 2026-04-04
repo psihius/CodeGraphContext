@@ -2,11 +2,123 @@
 from typing import Any, Dict
 from dataclasses import asdict
 from datetime import datetime
+from pathlib import Path
+import time
 from ...core.jobs import JobManager, JobStatus
 from ...utils.debug_log import debug_log
 from ...utils.tool_limits import get_tool_result_limit
 from ..code_finder import CodeFinder
 from ..graph_builder import GraphBuilder
+
+
+def _operation_label(operation: str) -> str:
+    return {
+        "index": "Index",
+        "reindex": "Re-index",
+        "package_index": "Package index",
+    }.get(operation or "index", "Job")
+
+
+def _job_status_message(job) -> str:
+    operation_label = _operation_label(getattr(job, "operation", "index"))
+    path_label = str(job.path) if job.path else "the requested path"
+
+    if job.status == JobStatus.PENDING:
+        return f"{operation_label} queued for {path_label}."
+
+    if job.status == JobStatus.RUNNING:
+        if job.phase and job.current_file and job.phase != "completed":
+            current_label = str(job.current_file)
+            if "/" in current_label or "\\" in current_label:
+                current_label = Path(current_label).name or current_label
+            return f"{operation_label} running: {job.phase} ({current_label})."
+        if job.phase:
+            return f"{operation_label} running: {job.phase}."
+        return f"{operation_label} running for {path_label}."
+
+    if job.status == JobStatus.COMPLETED:
+        return f"{operation_label} completed for {path_label}."
+
+    if job.status == JobStatus.CANCELLED:
+        return f"{operation_label} was cancelled for {path_label}."
+
+    if job.errors:
+        return f"{operation_label} failed for {path_label}: {job.errors[0]}"
+
+    return f"{operation_label} failed for {path_label}."
+
+
+def _serialize_job(job) -> Dict[str, Any]:
+    job_dict = asdict(job)
+
+    if job.status == JobStatus.RUNNING:
+        if job.estimated_time_remaining:
+            remaining = job.estimated_time_remaining
+            job_dict["estimated_time_remaining_human"] = (
+                f"{int(remaining // 60)}m {int(remaining % 60)}s"
+                if remaining >= 60 else f"{int(remaining)}s"
+            )
+
+        if job.start_time:
+            elapsed = (datetime.now() - job.start_time).total_seconds()
+            job_dict["elapsed_time_human"] = (
+                f"{int(elapsed // 60)}m {int(elapsed % 60)}s"
+                if elapsed >= 60 else f"{int(elapsed)}s"
+            )
+
+    elif job.status == JobStatus.COMPLETED and job.start_time and job.end_time:
+        duration = (job.end_time - job.start_time).total_seconds()
+        job_dict["actual_duration_human"] = (
+            f"{int(duration // 60)}m {int(duration % 60)}s"
+            if duration >= 60 else f"{int(duration)}s"
+        )
+
+    job_dict["start_time"] = job.start_time.strftime("%Y-%m-%d %H:%M:%S")
+    if job.end_time:
+        job_dict["end_time"] = job.end_time.strftime("%Y-%m-%d %H:%M:%S")
+
+    job_dict["status"] = job.status.value
+    job_dict["status_message"] = _job_status_message(job)
+    job_dict["is_active"] = job.status in {JobStatus.PENDING, JobStatus.RUNNING}
+    job_dict["recommended_poll_interval_seconds"] = 2 if job_dict["is_active"] else 0
+    job_dict["operation_label"] = _operation_label(getattr(job, "operation", "index"))
+    return job_dict
+
+
+def _freshness_recommendation(freshness: Dict[str, Any]) -> Dict[str, Any]:
+    status = freshness.get("status")
+
+    if status == "fresh":
+        return {
+            "summary": freshness.get("message", "Repository matches the last indexed snapshot."),
+            "recommended_action": "watch_or_query",
+            "recommended_tool": "watch_directory",
+            "requires_user_attention": False,
+        }
+
+    if status == "no_snapshot":
+        return {
+            "summary": freshness.get("message", "No persisted index snapshot exists for this repository."),
+            "recommended_action": "watch_unverified_or_reindex",
+            "recommended_tool": "watch_directory",
+            "requires_user_attention": False,
+        }
+
+    if freshness.get("can_refresh_incrementally"):
+        changed_files = freshness.get("changed_files_count", 0)
+        return {
+            "summary": f"Repository changed since the last index snapshot. {changed_files} file(s) can be reconciled incrementally.",
+            "recommended_action": "incremental_reconcile",
+            "recommended_tool": "watch_directory",
+            "requires_user_attention": False,
+        }
+
+    return {
+        "summary": freshness.get("reason", "Repository changed since the last index snapshot."),
+        "recommended_action": "full_reindex",
+        "recommended_tool": "reindex_repository",
+        "requires_user_attention": True,
+    }
 
 def list_indexed_repositories(code_finder: CodeFinder, **args) -> Dict[str, Any]:
     """Tool to list indexed repositories."""
@@ -40,6 +152,22 @@ def delete_repository(graph_builder: GraphBuilder, **args) -> Dict[str, Any]:
         debug_log(f"Error deleting repository: {str(e)}")
         return {"error": f"Failed to delete repository: {str(e)}"}
 
+
+def check_index_freshness(graph_builder: GraphBuilder, **args) -> Dict[str, Any]:
+    """Check whether the current repository tree still matches the last indexed snapshot."""
+    repo_path = args.get("path")
+    if not repo_path:
+        return {"error": "Path is a required argument."}
+
+    try:
+        freshness = graph_builder.get_index_freshness(Path(repo_path))
+        freshness.update(_freshness_recommendation(freshness))
+        freshness["success"] = True
+        return freshness
+    except Exception as e:
+        debug_log(f"Error checking index freshness: {str(e)}")
+        return {"error": f"Failed to check index freshness: {str(e)}"}
+
 def check_job_status(job_manager: JobManager, **args) -> Dict[str, Any]:
     """Tool to check job status"""
     job_id = args.get("job_id")
@@ -56,41 +184,58 @@ def check_job_status(job_manager: JobManager, **args) -> Dict[str, Any]:
                 "message": f"Job with ID '{job_id}' not found. The ID may be incorrect or the job may have been cleared after a server restart."
             }
         
-        job_dict = asdict(job)
-        
-        if job.status == JobStatus.RUNNING:
-            if job.estimated_time_remaining:
-                remaining = job.estimated_time_remaining
-                job_dict["estimated_time_remaining_human"] = (
-                    f"{int(remaining // 60)}m {int(remaining % 60)}s" 
-                    if remaining >= 60 else f"{int(remaining)}s"
-                )
-            
-            if job.start_time:
-                elapsed = (datetime.now() - job.start_time).total_seconds()
-                job_dict["elapsed_time_human"] = (
-                    f"{int(elapsed // 60)}m {int(elapsed % 60)}s" 
-                    if elapsed >= 60 else f"{int(elapsed)}s"
-                )
-        
-        elif job.status == JobStatus.COMPLETED and job.start_time and job.end_time:
-            duration = (job.end_time - job.start_time).total_seconds()
-            job_dict["actual_duration_human"] = (
-                f"{int(duration // 60)}m {int(duration % 60)}s" 
-                if duration >= 60 else f"{int(duration)}s"
-            )
-        
-        job_dict["start_time"] = job.start_time.strftime("%Y-%m-%d %H:%M:%S")
-        if job.end_time:
-            job_dict["end_time"] = job.end_time.strftime("%Y-%m-%d %H:%M:%S")
-        
-        job_dict["status"] = job.status.value
-        
+        job_dict = _serialize_job(job)
         return {"success": True, "job": job_dict}
     
     except Exception as e:
         debug_log(f"Error checking job status: {str(e)}")
         return {"error": f"Failed to check job status: {str(e)}"}
+
+
+def wait_for_job(job_manager: JobManager, **args) -> Dict[str, Any]:
+    """Wait for a job to reach a terminal state or until timeout expires."""
+    job_id = args.get("job_id")
+    timeout_seconds = max(float(args.get("timeout_seconds", 60)), 0.0)
+    poll_interval_seconds = max(float(args.get("poll_interval_seconds", 1.0)), 0.1)
+
+    if not job_id:
+        return {"error": "Job ID is a required argument."}
+
+    try:
+        deadline = time.monotonic() + timeout_seconds
+
+        while True:
+            job = job_manager.get_job(job_id)
+            if not job:
+                return {
+                    "success": True,
+                    "status": "not_found",
+                    "message": f"Job with ID '{job_id}' not found. The ID may be incorrect or the job may have been cleared after a server restart."
+                }
+
+            if job.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
+                return {
+                    "success": True,
+                    "status": "completed",
+                    "wait_completed": True,
+                    "job": _serialize_job(job),
+                }
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return {
+                    "success": True,
+                    "status": "timeout",
+                    "wait_completed": False,
+                    "message": f"Timed out after {timeout_seconds:.1f}s while waiting for job '{job_id}'.",
+                    "job": _serialize_job(job),
+                }
+
+            time.sleep(min(poll_interval_seconds, remaining))
+
+    except Exception as e:
+        debug_log(f"Error waiting for job status: {str(e)}")
+        return {"error": f"Failed to wait for job status: {str(e)}"}
 
 def list_jobs(job_manager: JobManager) -> Dict[str, Any]:
     """Tool to list all jobs"""

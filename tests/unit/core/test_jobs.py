@@ -16,6 +16,15 @@ class TestJobManager:
         assert job.status == JobStatus.PENDING
         # JobInfo uses 'type' is not a field, strict dataclass. Check path instead?
         assert job.path == "/tmp"
+        assert job.operation == "index"
+
+    def test_create_job_with_operation(self):
+        manager = JobManager()
+        job_id = manager.create_job("/tmp/project", operation="reindex")
+
+        job = manager.get_job(job_id)
+        assert job is not None
+        assert job.operation == "reindex"
 
     def test_update_job_status(self):
         manager = JobManager()
@@ -32,4 +41,3 @@ class TestJobManager:
         manager = JobManager()
         job = manager.get_job("non_existent_id")
         assert job is None
-

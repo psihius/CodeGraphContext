@@ -292,6 +292,7 @@ class RepositoryEventHandler(FileSystemEventHandler):
             except Exception as _e:
                 warning_logger(f"[INHERIT-RESOLVE] Incremental failed: {_e}")
 
+        self.graph_builder.save_index_state(self.repo_path)
         info_logger(f"[INCREMENTAL] Done. Graph refresh for {event_path_str} complete! ✅")
 
     # The following methods are called by the watchdog observer when a file event occurs.

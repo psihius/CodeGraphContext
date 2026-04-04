@@ -42,6 +42,11 @@ One-time scan of a local folder to add code to the graph (libraries, dependencie
 - **Args:** `path` (string), `is_dependency` (boolean)
 - **Returns:** Job ID
 
+### `reindex_repository`
+Refresh an indexed repository by deleting its existing graph slice and rebuilding it in the background. If desired, it can also fall back to a first-time index when the repository is not indexed yet.
+- **Args**: `path` (string), `create_if_missing` (boolean), `is_dependency` (boolean)
+- **Returns**: Job ID and job-tracking instructions
+
 ### `add_package_to_graph`
 
 Add an external package by resolving its install location.
@@ -57,12 +62,27 @@ List repositories currently in the graph.
 - **Args:** None
 - **Returns:** Paths and metadata for each indexed repo
 
+### `check_index_freshness`
+Check whether a repository has changed since the last successful index snapshot. Useful after restarting the MCP server to decide whether a re-index is actually needed.
+- **Args**: `path` (string)
+- **Returns**: Fresh/stale status, change counts, whether incremental reconciliation is possible, and normalized recommendation fields like `recommended_action` / `recommended_tool`
+
 ### `delete_repository`
 
 Remove a repository from the graph.
 
 - **Args:** `repo_path` (string)
 - **Returns:** Success message
+
+### `check_job_status`
+Check the status of a background job (indexing, scanning).
+- **Args**: `job_id` (string)
+- **Returns**: Job status (running, completed, failed), phase/progress, and a status message suitable for relaying to the user
+
+### `wait_for_job`
+Wait for a background job to reach a terminal state and return the final job snapshot. Useful for MCP clients that want a single blocking call instead of manual polling.
+- **Args**: `job_id` (string), `timeout_seconds` (number), `poll_interval_seconds` (number)
+- **Returns**: Final job state, or a timeout response with the latest known job snapshot
 
 ### `get_repository_stats`
 
@@ -138,10 +158,16 @@ Search the public bundle registry.
 
 ### `watch_directory`
 
-Initial index plus continuous filesystem watching to keep the graph current.
+Continuously monitor a directory for changes and keep the graph updated.
+- **Args**: `path` (string)
+- **Returns**: Structured startup status including normalized fields such as `startup_action`, `index_validation`, and `recommended_next_tool`
 
-- **Args:** `path` (string)
-- **Returns:** Job ID for the initial scan
+Common `watch_directory` outcomes:
+- `watching_fresh_index`: existing index matched the saved snapshot, watcher started immediately
+- `watching_after_incremental_refresh`: small offline changes were reconciled, then watcher started
+- `watching_unverified_index`: existing index was present but no saved snapshot existed
+- `initial_index_started_and_watching`: first-time index was started, watcher attached
+- `stale_index`: watcher refused to start because the repo needs a full re-index first
 
 ### `list_watched_paths`
 

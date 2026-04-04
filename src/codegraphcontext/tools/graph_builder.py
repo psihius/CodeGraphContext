@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from ..cli.config_manager import get_config_value
+from ..core import index_state
 from ..core.database import DatabaseManager
 from ..core.jobs import JobManager, JobStatus
 from ..utils.debug_log import debug_log, error_logger, info_logger, warning_logger
@@ -125,6 +126,66 @@ class GraphBuilder:
     def pre_scan_imports(self, files: list[Path]) -> dict:
         """Build global imports_map from language pre-scans (public API for watchers/pipeline)."""
         return pre_scan_for_imports(files, self.parsers, self.get_parser)
+
+    def _set_job_phase(
+        self,
+        job_id: Optional[str],
+        phase: str,
+        total: int = 0,
+        completed: int = 0,
+        current_file: Optional[str] = None,
+    ) -> None:
+        if not job_id:
+            return
+        payload: Dict[str, Any] = {
+            "phase": phase,
+            "phase_total": total,
+            "phase_completed": completed,
+        }
+        if current_file is not None:
+            payload["current_file"] = current_file
+        self.job_manager.update_job(job_id, **payload)
+
+    async def _yield_to_progress_ui(self, job_id: Optional[str], seconds: float = 0.06) -> None:
+        if job_id:
+            await asyncio.sleep(seconds)
+
+    def save_index_state(self, repo_path: Path) -> Dict[str, Any]:
+        """Persist a lightweight snapshot of the indexed repository for freshness checks."""
+        return index_state.save_index_state(self, repo_path)
+
+    def get_index_freshness(self, repo_path: Path) -> Dict[str, Any]:
+        """Compare the current repository tree with the last indexed snapshot."""
+        return index_state.check_index_freshness(self, repo_path)
+
+    def remove_index_state(self, repo_path: Path) -> None:
+        """Remove the persisted snapshot associated with a repository."""
+        index_state.remove_index_state(repo_path)
+
+    def reconcile_repository_files(
+        self,
+        repo_path: Path,
+        freshness: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Reconcile a small stale snapshot by requesting a full reindex.
+
+        The old monolithic graph builder could update a subset of files and
+        relink the repository in-place. In the refactored pipeline, the safe
+        path is to ask callers to use the background reindex workflow.
+        """
+        freshness = freshness or self.get_index_freshness(repo_path)
+        if freshness.get("status") != "stale":
+            return {
+                "success": True,
+                "status": freshness.get("status", "fresh"),
+                "updated_files": 0,
+            }
+        return {
+            "success": False,
+            "status": "requires_full_reindex",
+            "updated_files": 0,
+            "message": "Incremental offline reconciliation is unavailable in the refactored indexing pipeline; use reindex_repository.",
+        }
 
     def _pre_scan_for_imports(self, files: list[Path]) -> dict:
         """Dispatches pre-scan to the correct language-specific implementation."""
@@ -831,7 +892,10 @@ class GraphBuilder:
         self._writer.delete_file_from_graph(path)
 
     def delete_repository_from_graph(self, repo_path: str) -> bool:
-        return self._writer.delete_repository_from_graph(repo_path)
+        deleted = self._writer.delete_repository_from_graph(repo_path)
+        if deleted:
+            self.remove_index_state(Path(repo_path))
+        return deleted
 
     def get_caller_file_paths(self, file_path_str: str) -> set:
         return self._writer.get_caller_file_paths(file_path_str)
@@ -972,6 +1036,7 @@ class GraphBuilder:
                     info_logger(f"SCIP_INDEXER=true — using SCIP for language: {detected_lang}")
                     try:
                         await self._build_graph_from_scip(path, is_dependency, job_id, detected_lang)
+                        self.save_index_state(path)
                         return
                     except Exception as e:
                         warning_logger(
@@ -1003,6 +1068,7 @@ class GraphBuilder:
                 self.add_minimal_file_node,
                 call_resolution_diagnostics=self.last_call_resolution_diagnostics,
             )
+            self.save_index_state(path)
         except Exception as e:
             error_message = str(e)
             error_logger(f"Failed to build graph for path {path}: {error_message}")

@@ -804,12 +804,27 @@ def watch_helper(path: str, context: Optional[str] = None):
         
         # Add the directory to watch
         if is_indexed:
-            console.print("[green]✓[/green] Already indexed (no initial scan needed)")
-            watcher.watch_directory(
-                str(path_obj),
-                perform_initial_scan=False,
-                cgcignore_path=ctx.cgcignore_path,
-            )
+            freshness = graph_builder.get_index_freshness(path_obj)
+            if freshness.get("status") == "fresh":
+                console.print("[green]✓[/green] Already indexed and matches the last saved snapshot")
+                watcher.watch_directory(str(path_obj), perform_initial_scan=False, cgcignore_path=ctx.cgcignore_path)
+            elif freshness.get("status") == "no_snapshot":
+                console.print("[yellow]⚠[/yellow]  Already indexed, but no saved freshness snapshot was found")
+                watcher.watch_directory(str(path_obj), perform_initial_scan=False, cgcignore_path=ctx.cgcignore_path)
+            elif freshness.get("can_refresh_incrementally"):
+                console.print("[yellow]⚠[/yellow]  Found small offline changes since the last snapshot")
+                reconcile_result = graph_builder.reconcile_repository_files(path_obj, freshness)
+                if not reconcile_result.get("success"):
+                    console.print("[red]✗[/red] Could not reconcile the index incrementally")
+                    console.print("[dim]Run 'cgc index --force .', then start watch mode again.[/dim]")
+                    return
+                console.print("[green]✓[/green] Reconciled offline changes without a full re-index")
+                watcher.watch_directory(str(path_obj), perform_initial_scan=False, cgcignore_path=ctx.cgcignore_path)
+            else:
+                console.print("[red]✗[/red] Indexed state is stale compared to the last saved snapshot")
+                console.print(f"[dim]Reason: {freshness.get('reason', 'repository changed since the last index')}[/dim]")
+                console.print("[dim]Run 'cgc index --force .', then start watch mode again.[/dim]")
+                return
         else:
             console.print("[yellow]⚠[/yellow]  Not indexed yet. Performing initial scan...")
             

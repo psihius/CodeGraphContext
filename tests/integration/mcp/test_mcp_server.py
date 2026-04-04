@@ -140,3 +140,39 @@ class TestMCPServer:
             assert result == {"error": "Unknown tool: find_code"}
 
         asyncio.run(run_test())
+
+    def test_reindex_repository_routing(self, mock_server):
+        """Verify routing for the MCP re-index tool."""
+        async def run_test():
+            with patch('codegraphcontext.server.indexing_handlers.reindex_repository') as mock_handler:
+                mock_handler.return_value = {"job_id": "456", "status": "started"}
+
+                result = await mock_server.handle_tool_call("reindex_repository", {"path": "."})
+
+                assert result == {"job_id": "456", "status": "started"}
+
+        asyncio.run(run_test())
+
+    def test_wait_for_job_routing(self, mock_server):
+        """Verify routing for the MCP wait tool."""
+        async def run_test():
+            with patch('codegraphcontext.server.management_handlers.wait_for_job') as mock_handler:
+                mock_handler.return_value = {"status": "completed", "wait_completed": True}
+
+                result = await mock_server.handle_tool_call("wait_for_job", {"job_id": "123"})
+
+                assert result == {"status": "completed", "wait_completed": True}
+
+        asyncio.run(run_test())
+
+    def test_check_index_freshness_routing(self, mock_server):
+        """Verify routing for the MCP freshness-check tool."""
+        async def run_test():
+            with patch('codegraphcontext.server.management_handlers.check_index_freshness') as mock_handler:
+                mock_handler.return_value = {"status": "fresh", "is_fresh": True}
+
+                result = await mock_server.handle_tool_call("check_index_freshness", {"path": "."})
+
+                assert result == {"status": "fresh", "is_fresh": True}
+
+        asyncio.run(run_test())

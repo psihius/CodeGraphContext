@@ -13,12 +13,38 @@ TOOLS = {
             "required": ["path"]
         }
     },
+    "reindex_repository": {
+        "name": "reindex_repository",
+        "description": "Refresh an indexed repository by deleting its current graph slice and rebuilding it as a background job. If the repository is not indexed yet, it can optionally fall back to an initial index. Use this when the user explicitly asks to refresh, rebuild, or update the index now.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the repository or file to re-index."},
+                "create_if_missing": {"type": "boolean", "description": "If true, start a first-time index when the repository is not already indexed.", "default": True},
+                "is_dependency": {"type": "boolean", "description": "Whether this code should be indexed as a dependency.", "default": False}
+            },
+            "required": ["path"]
+        }
+    },
     "check_job_status": {
         "name": "check_job_status",
         "description": "Check the status and progress of a background job.",
         "inputSchema": {
             "type": "object",
             "properties": { "job_id": {"type": "string", "description": "Job ID from a previous tool call"} },
+            "required": ["job_id"]
+        }
+    },
+    "wait_for_job": {
+        "name": "wait_for_job",
+        "description": "Wait for a background job to reach a terminal state and return its final status. Use this when you want to avoid hand-rolled polling in the calling agent.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "Job ID from a previous tool call"},
+                "timeout_seconds": {"type": "number", "description": "Maximum time to wait before returning a timeout response.", "default": 60},
+                "poll_interval_seconds": {"type": "number", "description": "How often to check the job while waiting.", "default": 1.0}
+            },
             "required": ["job_id"]
         }
     },
@@ -122,6 +148,17 @@ TOOLS = {
         "inputSchema": {
             "type": "object",
             "properties": {}
+        }
+    },
+    "check_index_freshness": {
+        "name": "check_index_freshness",
+        "description": "Check whether a repository has changed since the last successful index snapshot. Use this to avoid unnecessary re-indexing after restarting the MCP server.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the repository to validate."}
+            },
+            "required": ["path"]
         }
     },
     "delete_repository": {
