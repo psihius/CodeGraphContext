@@ -380,7 +380,16 @@ def _load_credentials():
     # Merge all configs with proper precedence (later sources override earlier ones)
     merged_config = {}
     for config in config_sources:
-        merged_config.update(config)
+        for key, value in config.items():
+            if value is None:
+                continue
+            if key == "IGNORE_DIRS":
+                merged_config[key] = config_manager._merge_csv_config_values(
+                    merged_config.get(key, ""),
+                    str(value),
+                )
+            else:
+                merged_config[key] = value
     
     # Apply merged config to environment, but never override runtime env.
     # Shell-level overrides such as `IGNORE_TEST_FILES=true cgc index ...`

@@ -46,7 +46,7 @@ DEFAULT_CONFIG = {
     "MAX_DEPTH": "unlimited",
     "PARALLEL_WORKERS": "4",
     "CACHE_ENABLED": "true",
-    "IGNORE_DIRS": "node_modules,venv,.venv,env,.env,dist,build,target,out,.git,.idea,.vscode,__pycache__",
+    "IGNORE_DIRS": "node_modules,venv,.venv,env,.env,dist,build,target,out,.git,.idea,.vscode,__pycache__,.phpunit.cache",
     "INDEX_SOURCE": "true",
     "INDEX_CALLS": "true",
     "INDEX_INHERITANCE": "true",
@@ -68,6 +68,27 @@ DEFAULT_CONFIG = {
     # Default fuzzy matching behavior for `cgc find name` (overridable per-command with --fuzzy/--no-fuzzy)
     "FUZZY_SEARCH": "true",
 }
+
+
+def _merge_csv_config_values(existing: str, incoming: str) -> str:
+    """Merge comma-separated config values while preserving first-seen order."""
+    merged: list[str] = []
+    seen: set[str] = set()
+
+    for raw_value in (existing, incoming):
+        if not raw_value:
+            continue
+        for item in raw_value.split(","):
+            normalized = item.strip()
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(normalized)
+
+    return ",".join(merged)
 
 # Configuration key descriptions
 CONFIG_DESCRIPTIONS = {
@@ -243,7 +264,12 @@ def load_config() -> Dict[str, str]:
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
                         key, value = line.split("=", 1)
-                        config[key.strip()] = value.strip()
+                        key = key.strip()
+                        cleaned_value = value.strip()
+                        if key == "IGNORE_DIRS":
+                            config[key] = _merge_csv_config_values(config.get(key, ""), cleaned_value)
+                        else:
+                            config[key] = cleaned_value
         except Exception as e:
             console.print(f"[red]Error loading global config: {e}[/red]")
     
@@ -259,7 +285,11 @@ def load_config() -> Dict[str, str]:
                         key = key.strip()
                         # Only override if it's a config key (not database credentials in local file)
                         if key in DEFAULT_CONFIG or key in DATABASE_CREDENTIAL_KEYS:
-                            config[key] = value.strip()
+                            cleaned_value = value.strip()
+                            if key == "IGNORE_DIRS":
+                                config[key] = _merge_csv_config_values(config.get(key, ""), cleaned_value)
+                            else:
+                                config[key] = cleaned_value
         except Exception as e:
             console.print(f"[yellow]Warning: Error loading local .env: {e}[/yellow]")
     
@@ -267,7 +297,10 @@ def load_config() -> Dict[str, str]:
     for key in DEFAULT_CONFIG.keys():
         env_value = os.getenv(key)
         if env_value is not None:
-            config[key] = env_value
+            if key == "IGNORE_DIRS":
+                config[key] = _merge_csv_config_values(config.get(key, ""), env_value)
+            else:
+                config[key] = env_value
     
     return config
 

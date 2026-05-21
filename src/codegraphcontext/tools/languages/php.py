@@ -53,7 +53,17 @@ PHP_QUERIES = {
         (object_creation_expression) @call_node
     """,
     "variables": """
-        (variable_name) @variable
+        (property_element
+            (variable_name) @variable
+        )
+
+        (simple_parameter
+            name: (variable_name) @variable
+        )
+
+        (assignment_expression
+            left: (variable_name) @variable
+        )
     """,
 }
 
@@ -300,34 +310,31 @@ class PhpTreeSitterParser:
         for node, capture_name in captures:
             if capture_name == "variable":
                 try:
-                     var_name = self._get_node_text(node)
-                     start_line = node.start_point[0] + 1
-                     
-                     start_byte = node.start_byte
-                     if start_byte in seen_vars:
-                         continue
-                     seen_vars.add(start_byte)
-                     
-                     ctx_name, ctx_type, ctx_line = self._get_parent_context(node)
+                    var_name = self._get_node_text(node)
+                    start_line = node.start_point[0] + 1
 
-                     # Infer type from assignment
-                     inferred_type = "mixed"
-                     parent = node.parent
-                     if parent and parent.type == 'assignment_expression':
-                         # $var = new Class();
-                         left = parent.child_by_field_name('left')
-                         right = parent.child_by_field_name('right')
-                         
-                         # Ensure we are looking at the left side variable
-                         if left == node and right and right.type == 'object_creation_expression':
-                             # Extract class name from right side
-                             for child in right.children:
-                                 if child.type in ('name', 'qualified_name'):
-                                     inferred_type = self._get_node_text(child)
-                                     var_type_map[(ctx_name, var_name)] = inferred_type
-                                     break
-                                     
-                     variables.append({
+                    var_key = (var_name, start_line)
+                    if var_key in seen_vars:
+                        continue
+                    seen_vars.add(var_key)
+
+                    ctx_name, ctx_type, ctx_line = self._get_parent_context(node)
+
+                    # Infer type from direct assignment on the left-hand side.
+                    inferred_type = "mixed"
+                    parent = node.parent
+                    if parent and parent.type == 'assignment_expression':
+                        left = parent.child_by_field_name('left')
+                        right = parent.child_by_field_name('right')
+
+                        if left == node and right and right.type == 'object_creation_expression':
+                            for child in right.children:
+                                if child.type in ('name', 'qualified_name'):
+                                    inferred_type = self._get_node_text(child)
+                                    var_type_map[(ctx_name, var_name)] = inferred_type
+                                    break
+
+                    variables.append({
                         "name": var_name,
                         "type": inferred_type,
                         "line_number": start_line,
@@ -335,7 +342,7 @@ class PhpTreeSitterParser:
                         "lang": self.language_name,
                         "context": ctx_name,
                         "class_context": ctx_name if ctx_type and ("class" in ctx_type or "interface" in ctx_type or "trait" in ctx_type) else None
-                     })
+                    })
                 except Exception as e:
                     continue
 
