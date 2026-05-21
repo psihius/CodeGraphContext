@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,31 @@ from ..sanitize import sanitize_props
 def _is_binder_exception(e: Exception) -> bool:
     err_str = str(e).lower()
     return "binder" in err_str or "cannot find a valid label" in err_str
+
+
+def _node_write_chunk_size(label: str, driver: Any) -> Optional[int]:
+    if label not in {"Function", "Variable"}:
+        return None
+
+    backend_name = driver.__class__.__name__.lower()
+    default_size = 500 if "falkor" in backend_name else 2000
+    raw_value = (
+        os.getenv("CGC_NODE_WRITE_CHUNK_SIZE")
+        or os.getenv("CGC_FALKORDB_NODE_WRITE_CHUNK_SIZE")
+        or str(default_size)
+    )
+    try:
+        chunk_size = int(raw_value)
+    except (TypeError, ValueError):
+        return default_size
+    return chunk_size if chunk_size > 0 else None
+
+
+def _iter_node_write_chunks(label: str, rows: List[Dict[str, Any]], driver: Any) -> List[List[Dict[str, Any]]]:
+    chunk_size = _node_write_chunk_size(label, driver)
+    if not chunk_size or len(rows) <= chunk_size:
+        return [rows]
+    return [rows[index:index + chunk_size] for index in range(0, len(rows), chunk_size)]
 
 
 
@@ -251,25 +277,26 @@ class GraphWriter:
                     merge_clause = f"MERGE (n:{label} {{name: row.name, path: $file_path, line_number: row.line_number}})"
                     match_clause = f"MATCH (n:{label} {{name: row.name, path: $file_path, line_number: row.line_number}})"
 
-                session.run(
-                    f"""
-                    UNWIND $batch AS row
-                    {merge_clause}
-                    SET n += row
-                """,
-                    batch=batch,
-                    file_path=file_path_str,
-                )
-                session.run(
-                    f"""
-                    UNWIND $batch AS row
-                    MATCH (f:File {{path: $file_path}})
-                    {match_clause}
-                    MERGE (f)-[:CONTAINS]->(n)
-                """,
-                    batch=batch,
-                    file_path=file_path_str,
-                )
+                for chunk in _iter_node_write_chunks(label, batch, self.driver):
+                    session.run(
+                        f"""
+                        UNWIND $batch AS row
+                        {merge_clause}
+                        SET n += row
+                    """,
+                        batch=chunk,
+                        file_path=file_path_str,
+                    )
+                    session.run(
+                        f"""
+                        UNWIND $batch AS row
+                        MATCH (f:File {{path: $file_path}})
+                        {match_clause}
+                        MERGE (f)-[:CONTAINS]->(n)
+                    """,
+                        batch=chunk,
+                        file_path=file_path_str,
+                    )
 
             if params_batch:
                 # Deduplicate parameter rows to ensure consistent counts across
