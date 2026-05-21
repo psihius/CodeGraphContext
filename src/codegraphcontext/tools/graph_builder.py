@@ -35,6 +35,7 @@ class GraphBuilder:
         self.driver = self.db_manager.get_driver()
         self._writer = GraphWriter(self.driver)
         self.last_call_resolution_diagnostics: list[Dict[str, Any]] = []
+        self._unavailable_parsers: set[str] = set()
         self.parsers = {
             ".py": "python",
             ".ipynb": "python",
@@ -86,6 +87,9 @@ class GraphBuilder:
 
     def get_parser(self, extension: str) -> Optional[TreeSitterParser]:
         """Gets or creates a TreeSitterParser for the given extension (thread-local)."""
+        if extension in self._unavailable_parsers:
+            return None
+
         lang_name = self.parsers.get(extension)
         if not lang_name:
             return None
@@ -97,7 +101,11 @@ class GraphBuilder:
             try:
                 self._parsed_cache.parsers[lang_name] = TreeSitterParser(lang_name)
             except Exception as e:
-                warning_logger(f"Failed to initialize parser for {lang_name}: {e}")
+                warning_logger(
+                    f"Tree-sitter parser for {lang_name} ({extension}) is unavailable. "
+                    f"Falling back to file-only indexing for matching files. Error: {e}"
+                )
+                self._unavailable_parsers.add(extension)
                 return None
         return self._parsed_cache.parsers[lang_name]
 
@@ -946,8 +954,33 @@ class GraphBuilder:
 
         parser = self.get_parser(ext)
         if not parser:
-            warning_logger(f"No parser found for file extension {ext}. Skipping {path}")
-            return {"path": str(path), "error": f"No parser for {ext}", "unsupported": True}
+            warning_logger(
+                f"No parser available for {ext}. Indexing {path} as a file node without symbol extraction."
+            )
+            return {
+                "path": str(path.resolve()),
+                "repo_path": str(repo_path.resolve()),
+                "lang": self.parsers.get(ext),
+                "functions": [],
+                "classes": [],
+                "traits": [],
+                "interfaces": [],
+                "macros": [],
+                "structs": [],
+                "enums": [],
+                "unions": [],
+                "records": [],
+                "properties": [],
+                "variables": [],
+                "modules": [],
+                "module_inclusions": [],
+                "imports": [],
+                "function_calls": [],
+                "calls": [],
+                "inheritances": [],
+                "implements": [],
+                "is_dependency": is_dependency,
+            }
 
         debug_log(f"[parse_file] Starting parsing for: {path} with {parser.language_name} parser")
         try:
