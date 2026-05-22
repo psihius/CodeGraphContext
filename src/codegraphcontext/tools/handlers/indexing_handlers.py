@@ -308,15 +308,6 @@ def reindex_repository(graph_builder, job_manager, loop, list_repos_func, **args
     try:
         path_obj = Path(path).resolve()
 
-        if not _is_path_allowed(path_obj):
-            return {
-                "error": (
-                    f"Path '{path}' is outside the allowed roots. "
-                    "Only subdirectories of the current working directory (or paths "
-                    "listed in the CGC_ALLOWED_ROOTS environment variable) can be indexed."
-                )
-            }
-
         if not path_obj.exists():
             return {
                 "success": True,
@@ -336,7 +327,16 @@ def reindex_repository(graph_builder, job_manager, loop, list_repos_func, **args
             }
 
         indexed_repos = list_repos_func().get("repositories", [])
-        repo_exists = any(Path(repo["path"]).resolve() == path_obj for repo in indexed_repos)
+        repo_exists = any(repo_record_matches_path(repo, path_obj) for repo in indexed_repos)
+
+        if not repo_exists and not _is_path_allowed(path_obj):
+            return {
+                "error": (
+                    f"Path '{path}' is outside the allowed roots. "
+                    "Only subdirectories of the current working directory (or paths "
+                    "listed in the CGC_ALLOWED_ROOTS environment variable) can be indexed."
+                )
+            }
 
         if not repo_exists and not create_if_missing:
             return {

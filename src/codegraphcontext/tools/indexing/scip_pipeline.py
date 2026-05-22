@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from ...cli.config_manager import get_config_value
 from ...core.jobs import JobManager, JobStatus
 from ...utils.debug_log import debug_log, error_logger, info_logger, warning_logger
 from ...utils.path_ignore import file_path_has_ignore_dir_segment
@@ -25,6 +26,13 @@ def name_from_symbol(symbol: str) -> str:
     parts = re.split(r"[/#]", s)
     last = parts[-1] if parts else symbol
     return last or symbol
+
+
+def _is_config_enabled(key: str, default: str = "false") -> bool:
+    value = get_config_value(key)
+    if value is None:
+        value = default
+    return str(value).lower() == "true"
 
 
 async def run_scip_index_async(
@@ -185,15 +193,21 @@ async def run_scip_index_async(
                 f"[SCIP+TS] Supplemented {supplemented} files not covered by SCIP indexer"
             )
 
-        info_logger(
-            f"[INHERITS] Resolving inheritance links across {len(files_data)} files..."
-        )
-        inheritance_batch, csharp_files = build_inheritance_and_csharp_files(
-            list(files_data.values()), imports_map
-        )
-        writer.write_inheritance_links(inheritance_batch, csharp_files, imports_map)
+        if _is_config_enabled("INDEX_INHERITANCE", "true"):
+            info_logger(
+                f"[INHERITS] Resolving inheritance links across {len(files_data)} files..."
+            )
+            inheritance_batch, csharp_files = build_inheritance_and_csharp_files(
+                list(files_data.values()), imports_map
+            )
+            writer.write_inheritance_links(inheritance_batch, csharp_files, imports_map)
+        else:
+            info_logger("[INHERITS] Skipped because INDEX_INHERITANCE=false.")
 
-        writer.write_scip_call_edges(files_data, name_from_symbol)
+        if _is_config_enabled("INDEX_CALLS", "true"):
+            writer.write_scip_call_edges(files_data, name_from_symbol)
+        else:
+            info_logger("[CALLS] Skipped because INDEX_CALLS=false.")
 
         if job_id:
             job_manager.update_job(job_id, status=JobStatus.COMPLETED, end_time=datetime.now())

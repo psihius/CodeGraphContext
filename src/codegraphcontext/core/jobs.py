@@ -40,11 +40,21 @@ class JobInfo:
     path: Optional[str] = None
     is_dependency: bool = False
     operation: str = "index"
+    phase: str = "queued"
+    phase_total: int = 0
+    phase_completed: int = 0
 
     def __post_init__(self):
         """Ensures the errors list is initialized after the object is created."""
         if self.errors is None:
             self.errors = []
+
+    @property
+    def phase_percentage(self) -> float:
+        """Calculates completion percentage for the current phase."""
+        if self.phase_total == 0:
+            return 0.0
+        return (self.phase_completed / self.phase_total) * 100
 
     @property
     def progress_percentage(self) -> float:

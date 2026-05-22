@@ -129,7 +129,11 @@ def _discover_supported_files(graph_builder, repo_path: Path) -> list[Path]:
         path_obj,
         supported_extensions=set(supported_extensions.keys()),
     )
-    return files
+    return [
+        file_path
+        for file_path in files
+        if INDEX_STATE_DIRNAME not in file_path.relative_to(path_obj).parts
+    ]
 
 
 def _build_manifest(graph_builder, repo_path: Path) -> Dict[str, Dict[str, int]]:

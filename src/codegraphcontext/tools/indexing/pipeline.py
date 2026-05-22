@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from ...cli.config_manager import get_config_value
 from ...core.jobs import JobManager, JobStatus
 from ...utils.debug_log import debug_log, error_logger, info_logger
 from .discovery import discover_files_to_index
@@ -16,6 +17,24 @@ from .persistence.writer import GraphWriter
 from .pre_scan import pre_scan_for_imports
 from .resolution.calls import build_function_call_groups
 from .resolution.inheritance import build_inheritance_and_csharp_files
+
+
+def _is_config_enabled(key: str, default: str = "false") -> bool:
+    value = get_config_value(key)
+    if value is None:
+        value = default
+    return str(value).lower() == "true"
+
+
+def _positive_int_config(key: str, default: int) -> int:
+    value = get_config_value(key)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
 
 
 async def run_tree_sitter_index_async(
@@ -86,18 +105,21 @@ async def run_tree_sitter_index_async(
             return None
 
     # Process all files in parallel with the semaphore limit
-    tasks = [process_file(f) for f in files]
-    for coro in asyncio.as_completed(tasks):
-        file_data = await coro
-        if file_data:
-            all_file_data.append(file_data)
-        
-        processed_count += 1
-        if job_id:
-            job_manager.update_job(job_id, processed_files=processed_count)
-        
-        if processed_count % 50 == 0:
-            info_logger(f"Processed {processed_count}/{len(files)} files...")
+    file_batch_size = _positive_int_config("WRITE_BATCH_SIZE", 400)
+    for batch_start in range(0, len(files), file_batch_size):
+        file_batch = files[batch_start:batch_start + file_batch_size]
+        tasks = [process_file(f) for f in file_batch]
+        for coro in asyncio.as_completed(tasks):
+            file_data = await coro
+            if file_data:
+                all_file_data.append(file_data)
+
+            processed_count += 1
+            if job_id:
+                job_manager.update_job(job_id, processed_files=processed_count)
+
+            if processed_count % 50 == 0:
+                info_logger(f"Processed {processed_count}/{len(files)} files...")
 
     info_logger(
         f"File processing complete. {len(all_file_data)} files parsed. "
@@ -105,19 +127,25 @@ async def run_tree_sitter_index_async(
     )
 
     t0 = time.time()
-    info_logger(f"[INHERITS] Resolving inheritance links across {len(all_file_data)} files...")
-    inheritance_batch, csharp_files = build_inheritance_and_csharp_files(all_file_data, imports_map)
-    writer.write_inheritance_links(inheritance_batch, csharp_files, imports_map)
+    if _is_config_enabled("INDEX_INHERITANCE", "true"):
+        info_logger(f"[INHERITS] Resolving inheritance links across {len(all_file_data)} files...")
+        inheritance_batch, csharp_files = build_inheritance_and_csharp_files(all_file_data, imports_map)
+        writer.write_inheritance_links(inheritance_batch, csharp_files, imports_map)
+    else:
+        info_logger("[INHERITS] Skipped because INDEX_INHERITANCE=false.")
     t1 = time.time()
     info_logger(f"Inheritance links created in {t1 - t0:.1f}s. Starting function calls...")
 
-    resolved_calls = build_function_call_groups(
-        all_file_data,
-        imports_map,
-        None,
-        diagnostics=call_resolution_diagnostics,
-    )
-    writer.write_function_call_groups(*resolved_calls)
+    if _is_config_enabled("INDEX_CALLS", "true"):
+        resolved_calls = build_function_call_groups(
+            all_file_data,
+            imports_map,
+            None,
+            diagnostics=call_resolution_diagnostics,
+        )
+        writer.write_function_call_groups(*resolved_calls)
+    else:
+        info_logger("[CALLS] Skipped because INDEX_CALLS=false.")
     t2 = time.time()
     info_logger(f"Function calls created in {t2 - t1:.1f}s. Total post-processing: {t2 - t0:.1f}s")
 

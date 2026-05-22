@@ -20,6 +20,7 @@ import json
 import os
 from pathlib import Path
 from importlib.metadata import version as pkg_version, PackageNotFoundError
+from dotenv import dotenv_values, find_dotenv
 
 from codegraphcontext.server import MCPServer
 from codegraphcontext.core.database import DatabaseManager
@@ -300,7 +301,6 @@ def _load_credentials():
     path as the global file.
     Arbitrary repo-root `.env` files are not loaded—only CodeGraphContext config paths.
     """
-    from dotenv import dotenv_values, find_dotenv
     from codegraphcontext.cli.config_manager import (
         ensure_config_dir,
         codegraphcontext_dotenv_at_cwd,

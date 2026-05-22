@@ -1,5 +1,6 @@
 # src/codegraphcontext/cli/cli_helpers.py
 import asyncio
+import atexit
 import json
 import uuid
 import urllib.parse
@@ -32,6 +33,52 @@ from ..utils.repo_path import any_repo_matches_path
 from .config_manager import resolve_context, ResolvedContext, register_repo_in_context, ensure_first_run_bootstrap
 
 console = Console()
+
+
+class CommandTimingTracker:
+    """Track coarse command phases and render a readable timing summary."""
+
+    def __init__(self, label: str):
+        self.label = label
+        self.started_at = time.perf_counter()
+        self.last_mark = self.started_at
+        self.phases: list[tuple[str, float]] = []
+        self.summary_printed_at: float | None = None
+
+    def mark(self, phase: str) -> float:
+        now = time.perf_counter()
+        elapsed = now - self.last_mark
+        self.phases.append((phase, elapsed))
+        self.last_mark = now
+        return elapsed
+
+    def total_elapsed(self) -> float:
+        return time.perf_counter() - self.started_at
+
+    def render(self, total_label: str = "Command total") -> list[str]:
+        lines = [f"[bold cyan]{self.label} timing[/bold cyan]"]
+        for phase, elapsed in self.phases:
+            lines.append(f"[dim]- {phase}: {elapsed:.2f}s[/dim]")
+        lines.append(f"[bold]- {total_label}: {self.total_elapsed():.2f}s[/bold]")
+        return lines
+
+    def print_summary(self, total_label: str = "Command total") -> None:
+        for line in self.render(total_label=total_label):
+            console.print(line)
+        self.summary_printed_at = self.total_elapsed()
+
+    def render_process_exit_summary(self) -> list[str]:
+        process_total = self.total_elapsed()
+        lines = [f"[bold cyan]{self.label} process timing[/bold cyan]"]
+        if self.summary_printed_at is not None:
+            tail = max(0.0, process_total - self.summary_printed_at)
+            lines.append(f"[dim]- post-summary shutdown tail: {tail:.2f}s[/dim]")
+        lines.append(f"[bold]- process total: {process_total:.2f}s[/bold]")
+        return lines
+
+    def print_process_exit_summary(self) -> None:
+        for line in self.render_process_exit_summary():
+            console.print(line)
 
 
 def _print_call_resolution_diagnostics(graph_builder: GraphBuilder, limit: int = 5) -> None:
@@ -223,10 +270,13 @@ async def _run_index_with_progress(graph_builder: GraphBuilder, path_obj: Path, 
 
 def index_helper(path: str, context: Optional[str] = None):
     """Synchronously indexes a repository in a given context."""
-    time_start = time.time()
+    timings = CommandTimingTracker("Index")
+    atexit.register(timings.print_process_exit_summary)
+    cleanup_reported = False
     services = _initialize_services(context)
     if not all(services[:3]):
         return
+    timings.mark("service initialization")
 
     db_manager, graph_builder, code_finder, ctx = services
     path_obj = Path(path).resolve()
@@ -234,10 +284,13 @@ def index_helper(path: str, context: Optional[str] = None):
     if not path_obj.exists():
         console.print(f"[red]Error: Path does not exist: {path_obj}[/red]")
         db_manager.close_driver()
+        timings.mark("driver and command cleanup")
+        timings.print_summary()
         return
 
     indexed_repos = code_finder.list_indexed_repositories()
     repo_exists = any_repo_matches_path(indexed_repos, path_obj)
+    timings.mark("existing index lookup")
 
     if repo_exists:
         # Check if the repository actually has files (not just an empty node from interrupted indexing)
@@ -256,6 +309,8 @@ def index_helper(path: str, context: Optional[str] = None):
                     console.print(f"[yellow]Repository '{path}' is already indexed with {file_count} files. Skipping.[/yellow]")
                     console.print("[dim]💡 Tip: Use 'cgc index --force' to re-index[/dim]")
                     db_manager.close_driver()
+                    timings.mark("driver and command cleanup")
+                    timings.print_summary()
                     return
                 else:
                     console.print(f"[yellow]Repository '{path}' exists but has no files (likely interrupted). Re-indexing...[/yellow]")
@@ -270,10 +325,9 @@ def index_helper(path: str, context: Optional[str] = None):
 
     try:
         asyncio.run(_run_index_with_progress(graph_builder, path_obj, is_dependency=False, cgcignore_path=ctx.cgcignore_path))
-        time_end = time.time()
-        elapsed = time_end - time_start
+        workload_elapsed = timings.mark("graph build")
         _print_call_resolution_diagnostics(graph_builder)
-        console.print(f"[green]Successfully finished indexing: {path} in {elapsed:.2f} seconds[/green]")
+        console.print(f"[green]Successfully finished indexing: {path} in {workload_elapsed:.2f} seconds[/green]")
         
         # Check if auto-watch is enabled
         try:
@@ -281,8 +335,12 @@ def index_helper(path: str, context: Optional[str] = None):
             auto_watch = get_config_value('ENABLE_AUTO_WATCH')
             if auto_watch and str(auto_watch).lower() == 'true':
                 console.print("\n[cyan]🔍 ENABLE_AUTO_WATCH is enabled. Starting watcher...[/cyan]")
+                console.print("[dim]Finalizing database and command cleanup before watcher handoff...[/dim]")
                 db_manager.close_driver()  # Close before starting watcher
-                watch_helper(path)  # This will block the terminal
+                timings.mark("driver cleanup before watcher handoff")
+                timings.print_summary(total_label="Index command total before watcher")
+                cleanup_reported = True
+                watch_helper(path, context=context)  # This will block the terminal
                 return  # watch_helper handles its own cleanup
         except Exception as e:
             console.print(f"[yellow]Warning: Could not check ENABLE_AUTO_WATCH: {e}[/yellow]")
@@ -291,7 +349,11 @@ def index_helper(path: str, context: Optional[str] = None):
         console.print(f"[bold red]An error occurred during indexing:[/bold red] {e}")
         raise typer.Exit(code=1)
     finally:
-        db_manager.close_driver()
+        if not cleanup_reported:
+            console.print("[dim]Finalizing database and command cleanup...[/dim]")
+            db_manager.close_driver()
+            timings.mark("driver and command cleanup")
+            timings.print_summary()
 
 
 def add_package_helper(package_name: str, language: str, context: Optional[str] = None):
@@ -543,10 +605,12 @@ def visualize_helper(repo_path: Optional[str] = None, port: int = 8000, context:
 
 def reindex_helper(path: str, context: Optional[str] = None):
     """Force re-index by deleting and rebuilding the repository."""
-    time_start = time.time()
+    timings = CommandTimingTracker("Re-index")
+    atexit.register(timings.print_process_exit_summary)
     services = _initialize_services(context)
     if not all(services[:3]):
         return
+    timings.mark("service initialization")
 
     db_manager, graph_builder, code_finder, ctx = services
     path_obj = Path(path).resolve()
@@ -554,35 +618,45 @@ def reindex_helper(path: str, context: Optional[str] = None):
     if not path_obj.exists():
         console.print(f"[red]Error: Path does not exist: {path_obj}[/red]")
         db_manager.close_driver()
+        timings.mark("driver and command cleanup")
+        timings.print_summary()
         return
 
     # Check if already indexed
     indexed_repos = code_finder.list_indexed_repositories()
     repo_exists = any_repo_matches_path(indexed_repos, path_obj)
+    timings.mark("existing index lookup")
 
     if repo_exists:
         console.print(f"[yellow]Deleting existing index for: {path_obj}[/yellow]")
         try:
             graph_builder.delete_repository_from_graph(str(path_obj))
             console.print("[green]✓[/green] Deleted old index")
+            timings.mark("delete existing index")
         except Exception as e:
             console.print(f"[red]Error deleting old index: {e}[/red]")
             db_manager.close_driver()
+            timings.mark("driver and command cleanup")
+            timings.print_summary()
             return
+    else:
+        timings.mark("delete existing index")
     
     console.print(f"[cyan]Re-indexing: {path_obj}[/cyan]")
     
     try:
         asyncio.run(_run_index_with_progress(graph_builder, path_obj, is_dependency=False, cgcignore_path=ctx.cgcignore_path))
-        time_end = time.time()
-        elapsed = time_end - time_start
+        workload_elapsed = timings.mark("graph build")
         _print_call_resolution_diagnostics(graph_builder)
-        console.print(f"[green]Successfully re-indexed: {path} in {elapsed:.2f} seconds[/green]")
+        console.print(f"[green]Successfully re-indexed: {path} in {workload_elapsed:.2f} seconds[/green]")
     except Exception as e:
         console.print(f"[bold red]An error occurred during re-indexing:[/bold red] {e}")
         raise typer.Exit(code=1)
     finally:
+        console.print("[dim]Finalizing database and command cleanup...[/dim]")
         db_manager.close_driver()
+        timings.mark("driver and command cleanup")
+        timings.print_summary()
 
 
 def update_helper(path: str, context: Optional[str] = None):

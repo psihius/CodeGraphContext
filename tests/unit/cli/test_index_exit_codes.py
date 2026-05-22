@@ -19,6 +19,17 @@ def _services(tmp_path):
     return db_manager, MagicMock(), code_finder, ctx
 
 
+def test_command_timing_tracker_renders_phase_summary():
+    tracker = cli_helpers.CommandTimingTracker("Index")
+    tracker.mark("service initialization")
+
+    rendered = tracker.render()
+
+    assert rendered[0] == "[bold cyan]Index timing[/bold cyan]"
+    assert any("service initialization" in line for line in rendered)
+    assert rendered[-1].startswith("[bold]- Command total:")
+
+
 def test_index_helper_exits_nonzero_on_indexing_failure(tmp_path):
     services = _services(tmp_path)
     with (

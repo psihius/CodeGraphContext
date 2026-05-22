@@ -4,6 +4,13 @@ from typing import Iterable, Optional, Tuple
 from pathspec import PathSpec
 
 
+def _is_git_marker(path: Path) -> bool:
+    """Return True when *path* points at a usable git metadata marker."""
+    if path.is_file():
+        return True
+    return path.is_dir() and (path / "HEAD").exists()
+
+
 def _resolve_explicit_path(ignore_root: Path, explicit_path: Optional[str]) -> Optional[Path]:
     """Resolve an explicit .cgcignore path relative to *ignore_root*."""
     if not explicit_path:
@@ -37,21 +44,27 @@ def find_cgcignore(ignore_root: Path, explicit_path: Optional[str] = None) -> Op
     git_root: Optional[Path] = None
     probe = ignore_root
     while True:
-        if (probe / ".git").exists():
+        if _is_git_marker(probe / ".git"):
             git_root = probe
             break
         if probe.parent == probe:
             break
         probe = probe.parent
 
+    if git_root is None:
+        candidate = ignore_root / ".cgcignore"
+        if candidate.exists():
+            return candidate
+        explicit_candidate = _resolve_explicit_path(ignore_root, explicit_path)
+        if explicit_candidate and explicit_candidate.exists():
+            return explicit_candidate
+        return None
+
     curr = ignore_root
     while True:
         candidate = curr / ".cgcignore"
         if candidate.exists():
             return candidate
-
-        if git_root is None:
-            return None
 
         if curr == git_root:
             break

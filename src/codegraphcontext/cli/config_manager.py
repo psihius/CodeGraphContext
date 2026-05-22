@@ -115,7 +115,7 @@ CONFIG_DESCRIPTIONS = {
     "INDEX_SOURCE": "Store full source code in graph database (for faster indexing use false, for better performance use true)",
     "INDEX_CALLS": "Create CALLS relationships during indexing (disable for faster local indexing)",
     "INDEX_INHERITANCE": "Create INHERITS relationships during indexing (disable for faster local indexing)",
-    "WRITE_BATCH_SIZE": "Number of files to accumulate before each batched graph write flush",
+    "WRITE_BATCH_SIZE": "Number of files to schedule in each indexing batch",
     "SCIP_INDEXER": "Use SCIP-based indexing for higher accuracy call/inheritance resolution (requires scip-<lang> tools installed)",
     "SCIP_LANGUAGES": "Comma-separated languages to index via SCIP when SCIP_INDEXER=true (python,typescript,javascript,go,rust,java,dart,cpp,c,csharp)",
     "SKIP_EXTERNAL_RESOLUTION": "Skip resolution attempts for external library method calls (recommended for enterprise large Java/Spring codebases)",

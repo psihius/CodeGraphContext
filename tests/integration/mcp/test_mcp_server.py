@@ -5,6 +5,18 @@ import json
 from unittest.mock import MagicMock, AsyncMock, patch
 from codegraphcontext.server import MCPServer
 
+
+def run_with_mcp_loop(coro):
+    """Run MCP coroutine with the same loop lifecycle used by `cgc mcp start`."""
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
 class TestMCPServer:
     """
     Integration tests for the MCP Server.
@@ -42,7 +54,7 @@ class TestMCPServer:
             mock_server.find_code_tool.assert_called_once_with(query="test")
             assert result == {"result": "found"}
             
-        asyncio.run(run_test())
+        run_with_mcp_loop(run_test())
 
     def test_unknown_tool(self, mock_server):
         """Test unknown tool returns error."""
@@ -51,7 +63,7 @@ class TestMCPServer:
             assert "error" in result
             assert "Unknown tool" in result["error"]
         
-        asyncio.run(run_test())
+        run_with_mcp_loop(run_test())
 
     def test_add_code_to_graph_routing(self, mock_server):
         """Verify routing for complex tools."""
@@ -69,7 +81,7 @@ class TestMCPServer:
                 # But we can check result
                 assert result == {"job_id": "123"}
         
-        asyncio.run(run_test())
+        run_with_mcp_loop(run_test())
 
     def test_tools_list_omits_disabled_tools_from_mcp_json(self, tmp_path):
         """Tools listed by the server should exclude mcp.json disabledTools entries."""
@@ -139,7 +151,7 @@ class TestMCPServer:
             result = await server.handle_tool_call("find_code", {"query": "test"})
             assert result == {"error": "Unknown tool: find_code"}
 
-        asyncio.run(run_test())
+        run_with_mcp_loop(run_test())
 
     def test_reindex_repository_routing(self, mock_server):
         """Verify routing for the MCP re-index tool."""
@@ -151,7 +163,7 @@ class TestMCPServer:
 
                 assert result == {"job_id": "456", "status": "started"}
 
-        asyncio.run(run_test())
+        run_with_mcp_loop(run_test())
 
     def test_wait_for_job_routing(self, mock_server):
         """Verify routing for the MCP wait tool."""
@@ -163,7 +175,7 @@ class TestMCPServer:
 
                 assert result == {"status": "completed", "wait_completed": True}
 
-        asyncio.run(run_test())
+        run_with_mcp_loop(run_test())
 
     def test_check_index_freshness_routing(self, mock_server):
         """Verify routing for the MCP freshness-check tool."""
@@ -175,4 +187,4 @@ class TestMCPServer:
 
                 assert result == {"status": "fresh", "is_fresh": True}
 
-        asyncio.run(run_test())
+        run_with_mcp_loop(run_test())
