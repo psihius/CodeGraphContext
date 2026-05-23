@@ -20,7 +20,7 @@ def php_parser():
     return PhpTreeSitterParser(wrapper)
 
 
-def test_php_variables_only_capture_declaration_like_sites(php_parser, temp_test_dir):
+def test_php_variables_capture_all_variable_name_nodes(php_parser, temp_test_dir):
     code = """<?php
 class Example
 {
@@ -42,8 +42,8 @@ class Example
 
     names = [item["name"] for item in result["variables"]]
 
-    assert names.count("$name") == 2
-    assert "$local" in names
-    assert "$copy" in names
-    assert "$this" not in names
-    assert len(result["variables"]) == 4
+    assert names.count("$name") == 3
+    assert names.count("$local") == 2
+    assert names.count("$copy") == 2
+    assert names.count("$this") == 1
+    assert len(result["variables"]) == 8

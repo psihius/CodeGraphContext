@@ -26,17 +26,6 @@ def _is_config_enabled(key: str, default: str = "false") -> bool:
     return str(value).lower() == "true"
 
 
-def _positive_int_config(key: str, default: int) -> int:
-    value = get_config_value(key)
-    if value is None:
-        return default
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
-
-
 async def run_tree_sitter_index_async(
     path: Path,
     is_dependency: bool,
@@ -104,22 +93,21 @@ async def run_tree_sitter_index_async(
             
             return None
 
-    # Process all files in parallel with the semaphore limit
-    file_batch_size = _positive_int_config("WRITE_BATCH_SIZE", 400)
-    for batch_start in range(0, len(files), file_batch_size):
-        file_batch = files[batch_start:batch_start + file_batch_size]
-        tasks = [process_file(f) for f in file_batch]
-        for coro in asyncio.as_completed(tasks):
-            file_data = await coro
-            if file_data:
-                all_file_data.append(file_data)
+    # Process all files in parallel with the semaphore limit. Keeping one
+    # repository-wide task set preserves main's write scheduling semantics; the
+    # graph currently has order-sensitive MERGE behavior for duplicate imports.
+    tasks = [process_file(f) for f in files]
+    for coro in asyncio.as_completed(tasks):
+        file_data = await coro
+        if file_data:
+            all_file_data.append(file_data)
 
-            processed_count += 1
-            if job_id:
-                job_manager.update_job(job_id, processed_files=processed_count)
+        processed_count += 1
+        if job_id:
+            job_manager.update_job(job_id, processed_files=processed_count)
 
-            if processed_count % 50 == 0:
-                info_logger(f"Processed {processed_count}/{len(files)} files...")
+        if processed_count % 50 == 0:
+            info_logger(f"Processed {processed_count}/{len(files)} files...")
 
     info_logger(
         f"File processing complete. {len(all_file_data)} files parsed. "

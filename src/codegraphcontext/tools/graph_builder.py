@@ -14,7 +14,7 @@ from ..core.database import DatabaseManager
 from ..core.jobs import JobManager, JobStatus
 from ..utils.debug_log import debug_log, error_logger, info_logger, warning_logger
 from .indexing.constants import DEFAULT_IGNORE_PATTERNS
-from .indexing.persistence.writer import GraphWriter
+from .indexing.persistence.writer import GraphWriter, _canonical_import_rows
 from .indexing.pipeline import run_tree_sitter_index_async
 from .indexing.pre_scan import pre_scan_for_imports
 from .indexing.resolution.calls import build_function_call_groups, resolve_function_call
@@ -462,27 +462,30 @@ class GraphBuilder:
                     other_imports.append(imp)
 
             if js_imports:
+                js_imports = _canonical_import_rows(js_imports, ("module_name",))
                 session.run("""
                     UNWIND $batch AS row
                     MATCH (f:File {path: $file_path})
                     MERGE (m:Module {name: row.module_name})
+                    SET m.full_import_name = row.module_name
                     MERGE (f)-[r:IMPORTS]->(m)
-                    SET r.imported_name = row.imported_name,
-                        r.alias = row.alias,
-                        r.line_number = row.line_number
+                    SET r.imported_name = coalesce(r.imported_name, row.imported_name),
+                        r.alias = coalesce(r.alias, row.alias),
+                        r.line_number = coalesce(r.line_number, row.line_number)
                 """, batch=js_imports, file_path=file_path_str)
 
             if other_imports:
+                other_imports = _canonical_import_rows(other_imports, ("name",))
                 # Non-JS languages share the same shape: name, alias, full_import_name
                 session.run("""
                     UNWIND $batch AS row
                     MATCH (f:File {path: $file_path})
                     MERGE (m:Module {name: row.name})
                     SET m.alias = row.alias,
-                        m.full_import_name = coalesce(row.full_import_name, m.full_import_name)
+                        m.full_import_name = row.name
                     MERGE (f)-[r:IMPORTS]->(m)
-                    SET r.line_number = row.line_number,
-                        r.alias = row.alias
+                    SET r.line_number = coalesce(r.line_number, row.line_number),
+                        r.alias = coalesce(r.alias, row.alias)
                 """, batch=other_imports, file_path=file_path_str)
 
             # ── Batch: Ruby Class INCLUDES Module ─────────────────────────────

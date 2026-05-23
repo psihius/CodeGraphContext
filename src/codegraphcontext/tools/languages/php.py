@@ -53,17 +53,7 @@ PHP_QUERIES = {
         (object_creation_expression) @call_node
     """,
     "variables": """
-        (property_element
-            (variable_name) @variable
-        )
-
-        (simple_parameter
-            name: (variable_name) @variable
-        )
-
-        (assignment_expression
-            left: (variable_name) @variable
-        )
+        (variable_name) @variable
     """,
 }
 
@@ -313,14 +303,14 @@ class PhpTreeSitterParser:
                     var_name = self._get_node_text(node)
                     start_line = node.start_point[0] + 1
 
-                    var_key = (var_name, start_line)
-                    if var_key in seen_vars:
+                    start_byte = node.start_byte
+                    if start_byte in seen_vars:
                         continue
-                    seen_vars.add(var_key)
+                    seen_vars.add(start_byte)
 
                     ctx_name, ctx_type, ctx_line = self._get_parent_context(node)
 
-                    # Infer type from direct assignment on the left-hand side.
+                    # Infer type from assignment.
                     inferred_type = "mixed"
                     parent = node.parent
                     if parent and parent.type == 'assignment_expression':
